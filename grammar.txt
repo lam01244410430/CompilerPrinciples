@@ -1,0 +1,50 @@
+S -> P
+P -> K F
+K -> struct id { M } ;
+M -> Y D ; M
+M -> e
+D -> * id
+D -> id
+Y -> int
+Y -> float
+Y -> char
+F -> void main ( ) B
+B -> { L }
+L -> A L
+L -> e
+A -> Y V ;
+A -> id Q
+Q -> id W ;
+Q -> U = E ;
+A -> if ( C ) G X
+A -> printf ( str , id ) ;
+X -> else G
+X -> e
+G -> A
+G -> B
+V -> id W
+W -> , id W
+W -> [ num ] O
+W -> = E
+W -> e
+O -> = { I }
+O -> e
+I -> { H } J
+J -> , { H } J
+J -> e
+H -> E Z
+Z -> , E Z
+Z -> e
+U -> [ E ] . id
+U -> e
+C -> E R E
+R -> <
+R -> >
+R -> ==
+E -> T N
+N -> + T N
+N -> - T N
+N -> e
+T -> id U
+T -> num
+T -> str

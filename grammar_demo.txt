@@ -1,0 +1,25 @@
+S -> L
+L -> A L
+L -> e
+A -> Y id O ;
+Y -> int
+Y -> float
+O -> = E
+O -> e
+A -> id = E ;
+A -> while ( C ) B
+A -> if ( C ) B X
+A -> print ( id ) ;
+B -> { L }
+X -> else B
+X -> e
+C -> E R E
+R -> >
+R -> <
+R -> ==
+E -> T E'
+E' -> + T E'
+E' -> - T E'
+E' -> e
+T -> id
+T -> num
