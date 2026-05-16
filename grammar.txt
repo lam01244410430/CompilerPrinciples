@@ -48,3 +48,4 @@ N -> e
 T -> id U
 T -> num
 T -> str
+T -> - num

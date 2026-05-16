@@ -15,7 +15,7 @@ typedef enum {
     TOK_LPAREN, TOK_RPAREN, TOK_LBRACE, TOK_RBRACE, TOK_SEMI,  
     TOK_LBRACKET, TOK_RBRACKET, TOK_DOT, TOK_COMMA,
     TOK_EOF, TOK_ERROR, TOK_STRUCT, TOK_STAR, 
-    TOK_VOID, TOK_MAIN /* [SỬA LỖI]: Bổ sung Token VOID và MAIN */
+    TOK_VOID, TOK_MAIN 
 } TokenType;
 
 typedef struct {
@@ -34,7 +34,6 @@ typedef struct {
     TokenType type; 
 } KeywordMap;
 
-/* [SỬA LỖI]: Thêm void, main và sửa print thành printf để khớp với file code */
 KeywordMap kwDict[] = {
     {"int", TOK_INT}, {"float", TOK_FLOAT}, {"real", TOK_FLOAT}, {"char", TOK_CHAR},
     {"struct", TOK_STRUCT}, {"void", TOK_VOID}, {"main", TOK_MAIN}, 
@@ -164,21 +163,20 @@ void printLexerResult() {
 }
 
 /* =====================================================================
- * 2. 语法分析 (LL(1) Parser Engine)
+ * 2. 语法分析 (LL(1) Parser & SDT Engine - Auto @ Injection)
  * ===================================================================== */
 Token tokens[2000];
 int tCount = 0;
 
-char ruleStr[50][100];      
-char ruleLHS[50][20];      
-char rhsItems[50][10][20];  
+char ruleStr[100][100];      
+char ruleLHS[100][20];      
+char rhsItems[100][10][20];  
 int numRules = 0;
 
-int ll1Matrix[50][50];      
-char NTs[50][20];           
+int ll1Matrix[100][100];      
+char NTs[100][20];           
 int ntCount = 0;
 
-/* [SỬA LỖI]: Bổ sung void và main vào TokenDict để Parser tìm thấy luật */
 typedef struct { const char* str; TokenType type; } TokenMap;
 TokenMap tokenDict[] = {
     {"int", TOK_INT}, {"float", TOK_FLOAT}, {"char", TOK_CHAR},
@@ -192,38 +190,49 @@ TokenMap tokenDict[] = {
     {"void", TOK_VOID}, {"main", TOK_MAIN} 
 };
 
-typedef struct { const char* lhs; const char* origRhs; const char* newRhs; } SDTInjector;
-SDTInjector injectors[] = {
-    {"Y", "int", "int @1"},
-    {"Y", "float", "float @2"},
-    {"A", "Y id O ;", "Y @3 id @4 O ;"},
-    {"A", "id = E ;", "id @5 = E @6 ;"},
-    {"O", "= E", "= E @7"},
-    {"E", "T E'", "T E' @8"},
-    {"T", "num", "num @9"},
-    {"T", "id", "id @10"}
-};
+// [LOGIC ẨN]: Tự động sinh mô tả thuộc tính
+void getActionDesc(int ruleIdx, char* desc) {
+    const char* lhs = ruleLHS[ruleIdx];
+    const char* str = ruleStr[ruleIdx];
+    
+    if (strstr(str, "e") && strlen(str) <= 6) sprintf(desc, "空归约 (无属性)");
+    else if (strcmp(lhs, "Y") == 0) {
+        char typeName[10] = "";
+        sscanf(str, "Y -> %s", typeName);
+        sprintf(desc, "Y.type=%s", typeName);
+    }
+    else if (strcmp(lhs, "V") == 0) sprintf(desc, "V.type=Y.type");
+    else if (strcmp(lhs, "A") == 0) sprintf(desc, "构建语句 AST");
+    else if (strcmp(lhs, "Q") == 0 || strcmp(lhs, "W") == 0 || strcmp(lhs, "O") == 0) {
+        if (strstr(str, "=")) sprintf(desc, "emit('=')");
+        else sprintf(desc, "属性传递");
+    }
+    else if (strcmp(lhs, "T") == 0) {
+        if (strstr(str, "- num")) sprintf(desc, "T.place=-num.val");
+        else if (strstr(str, "num")) sprintf(desc, "T.place=num.val");
+        else sprintf(desc, "T.place=id.place");
+    }
+    else if (strcmp(lhs, "E") == 0 || strcmp(lhs, "N") == 0) sprintf(desc, "%s.place 传递", lhs);
+    else sprintf(desc, "属性传递");
+}
 
-typedef struct { const char* action; const char* desc; } ActionMap;
-ActionMap actionDict[] = {
-    {"@1", "Y.type=int"},
-    {"@2", "Y.type=float"},
-    {"@3", "L.type=Y.type"},
-    {"@4", "id.place=&id; AddType()"},
-    {"@5", "id.place=lookup(id)"},
-    {"@6", "emit('=', E.place, '-', id.place)"},
-    {"@7", "O.val=E.place; emit('=')"},
-    {"@8", "E.place=T.place"},
-    {"@9", "T.place=num.val"},
-    {"@10", "T.place=id.place"}
-};
+void printCell(const char* str, int targetWidth) {
+    int w = 0;
+    for (int i = 0; str[i]; ) {
+        int charWidth = 1, charBytes = 1;
+        if ((unsigned char)str[i] >= 0xE0) { charWidth = 2; charBytes = 3; } 
+        else if ((unsigned char)str[i] >= 0xC0) { charWidth = 2; charBytes = 2; }
+        if (w + charWidth > targetWidth) break;
+        for(int b=0; b<charBytes; b++) printf("%c", str[i+b]);
+        w += charWidth;
+        i += charBytes;
+    }
+    while (w < targetWidth) { printf(" "); w++; }
+}
 
 int getNTId(const char* nt) {
     for(int i=0; i<ntCount; i++) { if(strcmp(NTs[i], nt) == 0) return i; }
-    if (ntCount < 50) {
-        strncpy(NTs[ntCount], nt, sizeof(NTs[ntCount]) - 1); 
-        return ntCount++;
-    }
+    if (ntCount < 100) { strncpy(NTs[ntCount], nt, sizeof(NTs[ntCount]) - 1); return ntCount++; }
     return 0;
 }
 
@@ -240,7 +249,7 @@ int isTerminal(const char* sym) {
 }
 
 int getFirst(const char* symbol, int* firstSet) {
-    if (symbol[0] == '@') return 1; 
+    if (symbol[0] == '@') return 1; // @ Kích hoạt Empty rỗng để tính FOLLOW
     if (isTerminal(symbol)) {
         if (strcmp(symbol, "e") == 0) return 1;
         TokenType t = strToToken(symbol);
@@ -250,8 +259,14 @@ int getFirst(const char* symbol, int* firstSet) {
     int hasEpsilon = 0;
     for(int i = 1; i <= numRules; i++) {
         if (strcmp(ruleLHS[i], symbol) == 0) {
-            int e_in_prod = getFirst(rhsItems[i][0], firstSet);
-            if(e_in_prod) hasEpsilon = 1;
+            int prodHasEpsilon = 1;
+            for(int j=0; strlen(rhsItems[i][j]) > 0; j++) {
+                int subSet[50] = {0};
+                int e = getFirst(rhsItems[i][j], subSet);
+                for(int t=0; t<50; t++) if(subSet[t]) firstSet[t] = 1;
+                if (!e) { prodHasEpsilon = 0; break; }
+            }
+            if (prodHasEpsilon) hasEpsilon = 1;
         }
     }
     return hasEpsilon;
@@ -276,42 +291,35 @@ void getFollow(const char* nt, int* followSet, int* visited) {
     }
 }
 
+// [CẬP NHẬT]: LL(1) Matrix Construction bảo vệ luật 'else'
 void buildLL1Matrix() {
     memset(ll1Matrix, 0, sizeof(ll1Matrix)); 
     for (int i = 1; i <= numRules; i++) {
         int ntId = getNTId(ruleLHS[i]);
         int firstSet[50] = {0};
-        int hasEpsilon = getFirst(rhsItems[i][0], firstSet);
-        
-        for (int t = 0; t < 50; t++) if (firstSet[t]) ll1Matrix[ntId][t] = i;
-        if (hasEpsilon) {
-            int followSet[50] = {0}, visited[50] = {0};
-            getFollow(ruleLHS[i], followSet, visited);
-            for (int t = 0; t < 50; t++) if (followSet[t]) ll1Matrix[ntId][t] = i;
-        }
-    }
-}
-
-void injectSemanticActions() {
-    for(int i = 1; i <= numRules; i++) {
-        char orig[100] = "";
-        for(int j = 0; strlen(rhsItems[i][j]) > 0; j++) {
-            strncat(orig, rhsItems[i][j], sizeof(orig) - strlen(orig) - 1);
-            if (strlen(rhsItems[i][j+1]) > 0) strncat(orig, " ", sizeof(orig) - strlen(orig) - 1);
-        }
-        
-        for(size_t k = 0; k < sizeof(injectors)/sizeof(SDTInjector); k++) {
-            if (strcmp(ruleLHS[i], injectors[k].lhs) == 0 && strcmp(orig, injectors[k].origRhs) == 0) {
-                char temp[100]; 
-                strncpy(temp, injectors[k].newRhs, sizeof(temp) - 1);
-                int c = 0; 
-                char* token = strtok(temp, " ");
-                while(token && c < 9) { 
-                    strncpy(rhsItems[i][c++], token, sizeof(rhsItems[i][c]) - 1); 
-                    token = strtok(NULL, " "); 
-                }
-                strcpy(rhsItems[i][c], "");
+        for(int j=0; strlen(rhsItems[i][j]) > 0; j++) {
+            int subSet[50] = {0};
+            if (!getFirst(rhsItems[i][j], subSet)) {
+                for(int t=0; t<50; t++) if(subSet[t]) firstSet[t] = 1;
                 break;
+            }
+            for(int t=0; t<50; t++) if(subSet[t]) firstSet[t] = 1;
+        }
+        for (int t = 0; t < 50; t++) if (firstSet[t]) ll1Matrix[ntId][t] = i;
+    }
+
+    for (int i = 1; i <= numRules; i++) {
+        int ntId = getNTId(ruleLHS[i]);
+        int hasEpsilon = 1;
+        for(int j=0; strlen(rhsItems[i][j]) > 0; j++) {
+            int subSet[50] = {0};
+            if (!getFirst(rhsItems[i][j], subSet)) { hasEpsilon = 0; break; }
+        }
+        if (hasEpsilon) {
+            int followSet[50] = {0}, visited[100] = {0};
+            getFollow(ruleLHS[i], followSet, visited);
+            for (int t = 0; t < 50; t++) {
+                if (followSet[t] && ll1Matrix[ntId][t] == 0) ll1Matrix[ntId][t] = i;
             }
         }
     }
@@ -321,7 +329,7 @@ void loadGrammar() {
     FILE *file = fopen("grammar.txt", "r");
     if (!file) { printf("\n[ERROR] 无法打开 grammar.txt 文件！\n"); exit(1); }
     char line[256]; int ruleIdx = 1;
-    while (fgets(line, sizeof(line), file) && ruleIdx < 50) {
+    while (fgets(line, sizeof(line), file) && ruleIdx < 100) {
         line[strcspn(line, "\r\n")] = '\0'; 
         if (strlen(line) == 0) continue;
         
@@ -335,18 +343,34 @@ void loadGrammar() {
             while(len > 0 && isspace((unsigned char)ruleLHS[ruleIdx][len-1])) ruleLHS[ruleIdx][--len] = '\0';
 
             char *rhs = arrow + 2; int c = 0; char *token = strtok(rhs, " ");
-            while (token && c < 9) { 
-                strncpy(rhsItems[ruleIdx][c++], token, sizeof(rhsItems[ruleIdx][c]) - 1); 
+            int hasEpsilon = 0;
+            while (token && c < 8) { 
+                if (strcmp(token, "e") == 0) {
+                    hasEpsilon = 1; // Đánh dấu đây là luật có Epsilon
+                } else {
+                    strncpy(rhsItems[ruleIdx][c++], token, sizeof(rhsItems[ruleIdx][c]) - 1); 
+                }
                 token = strtok(NULL, " "); 
             }
-            strcpy(rhsItems[ruleIdx][c], ""); 
+            
+            // [CẬP NHẬT MỚI]: Thêm @ vào tất cả mọi luật sinh
+            char actionLabel[10];
+            snprintf(actionLabel, sizeof(actionLabel), "@%d", ruleIdx);
+            
+            if (hasEpsilon) {
+                // Thay thế rỗng bằng @N trực tiếp
+                strcpy(rhsItems[ruleIdx][0], actionLabel);
+                strcpy(rhsItems[ruleIdx][1], ""); 
+            } else {
+                // Gắn @N vào cuối chuỗi
+                strncpy(rhsItems[ruleIdx][c++], actionLabel, sizeof(rhsItems[ruleIdx][c]) - 1);
+                strcpy(rhsItems[ruleIdx][c], ""); 
+            }
         }
         ruleIdx++;
     }
     numRules = ruleIdx - 1; 
     fclose(file);
-    
-    injectSemanticActions();
     buildLL1Matrix();
 }
 
@@ -366,16 +390,14 @@ int getRule(const char* nt, TokenType t) {
 }
 
 void printLL1Table() {
-    printf("\n表1 文法G[S]的部分LL(1)分析表\n");
-    printf("------------------------------------------------------------------------------------------------------------------------------------------------\n");
-    
-    /* [SỬA LỖI]: Cập nhật colNames hiển thị cho vừa khung */
-    const char* colNames[] = {"int", "float", "id", "num", "=", "struct", "void", "main", "str", "*", "#"};
-    int numCols = 11;
+    printf("\n表1 文法G[S]的部分LL(1)分析表 (包含 @ 语义动作)\n");
+    printf("----------------------------------------------------------------------------------------------------------------------------------------------------------\n");
+    const char* colNames[] = {"int", "float", "id", "num", "=", "struct", "void", "main", "else", "*", "-", "#"};
+    int numCols = 12;
 
-    printf("%-5s |", "");
-    for(int j=0; j<numCols; j++) printf(" %-10s |", colNames[j]);
-    printf("\n------------------------------------------------------------------------------------------------------------------------------------------------\n");
+    printf(" "); printCell("", 4); printf(" |");
+    for(int j=0; j<numCols; j++) { printf(" "); printCell(colNames[j], 11); printf(" |"); }
+    printf("\n----------------------------------------------------------------------------------------------------------------------------------------------------------\n");
 
     for(int i=0; i<ntCount; i++) {
         int hasRule = 0;
@@ -385,19 +407,26 @@ void printLL1Table() {
         }
         
         if (hasRule) {
-            printf("%-5s |", NTs[i]); 
+            printf(" "); printCell(NTs[i], 4); printf(" |"); 
             for(int j=0; j<numCols; j++) {
                 TokenType t = strToToken(colNames[j]);
                 int ruleId = (t != TOK_ERROR) ? ll1Matrix[i][t] : 0;
                 if (ruleId > 0) {
-                    char shortRule[30]; snprintf(shortRule, sizeof(shortRule), "%s", ruleStr[ruleId]); 
-                    printf(" %-10.10s |", shortRule);
-                } else printf(" %-10s |", ""); 
+                    // [ĐÃ HIỂN THỊ @ VÀO BẢNG 1]: Nén chuỗi có bao gồm cả ký hiệu @
+                    char shortRule[40] = "";
+                    snprintf(shortRule, sizeof(shortRule), "%s->", ruleLHS[ruleId]);
+                    for(int k=0; strlen(rhsItems[ruleId][k]) > 0; k++) {
+                        strcat(shortRule, rhsItems[ruleId][k]);
+                    }
+                    printf(" "); printCell(shortRule, 11); printf(" |");
+                } else {
+                    printf(" "); printCell("", 11); printf(" |");
+                }
             }
             printf("\n");
         }
     }
-    printf("------------------------------------------------------------------------------------------------------------------------------------------------\n");
+    printf("----------------------------------------------------------------------------------------------------------------------------------------------------------\n");
 }
 
 void runSyntaxProcess() {
@@ -406,52 +435,71 @@ void runSyntaxProcess() {
     strcpy(stack[++top], "#"); strcpy(stack[++top], "S");
     
     int step = 0; int ip = 0;
+    
     printf("\n表2 符号串的LL(1)分析过程及语义动作\n");
-    printf("----------------------------------------------------------------------------------------------------------------------------------\n");
-    printf("%-8s | %-28s | %-30s | %-18s | %-48s\n", "步骤", "分析栈", "余留符号串", "产生式", "下一步动作");
-    printf("----------------------------------------------------------------------------------------------------------------------------------\n");
+    printf("-----------------------------------------------------------------------------------------------------------------------------------------------------------------\n");
+    printf(" "); printCell("步骤", 5); printf(" | ");
+    printCell("分析栈", 50); printf(" | ");  // Cột Stack được mở rộng khổng lồ để chứa các ký tự @
+    printCell("符号串", 35); printf(" | ");
+    printCell("产生式", 25); printf(" | ");
+    printCell("下一步动作", 35); printf("\n");
+    printf("-----------------------------------------------------------------------------------------------------------------------------------------------------------------\n");
 
     while(top >= 0 && ip < tCount) {
         char X[20]; strncpy(X, stack[top], sizeof(X) - 1); X[sizeof(X) - 1] = '\0';
         Token a = tokens[ip];
         
-        char stkStr[200] = ""; for(int i=0; i<=top; i++) { strncat(stkStr, stack[i], sizeof(stkStr) - strlen(stkStr) - 1); }
+        char stkStr[300] = ""; 
+        // [CẬP NHẬT BẢNG 2]: Cho phép in toàn bộ các ký hiệu @ đang bị dồn lại trong ngăn xếp
+        for(int i=0; i<=top; i++) { 
+            strncat(stkStr, stack[i], sizeof(stkStr) - strlen(stkStr) - 1); 
+        }
+        
         char inStr[200] = ""; 
-        for(int i=ip; i<tCount && i<ip+10; i++) {
+        for(int i=ip; i<tCount && i<ip+8; i++) {
             if (tokens[i].type == TOK_ID) strncat(inStr, "id ", sizeof(inStr) - strlen(inStr) - 1);
             else if (tokens[i].type == TOK_NUM) strncat(inStr, "num ", sizeof(inStr) - strlen(inStr) - 1);
             else if (tokens[i].type == TOK_INT) strncat(inStr, "int ", sizeof(inStr) - strlen(inStr) - 1);
             else if (tokens[i].type == TOK_FLOAT) strncat(inStr, "float ", sizeof(inStr) - strlen(inStr) - 1);
             else { strncat(inStr, tokens[i].lexeme, sizeof(inStr) - strlen(inStr) - 1); strncat(inStr, " ", sizeof(inStr) - strlen(inStr) - 1); }
         }
-        if (ip + 10 < tCount) strncat(inStr, "...", sizeof(inStr) - strlen(inStr) - 1);
+        if (ip + 8 < tCount) strncat(inStr, "...", sizeof(inStr) - strlen(inStr) - 1);
+
+        char stepStr[10]; snprintf(stepStr, sizeof(stepStr), "%d", step++);
+        char action[150] = "";
+        char prodStr[50] = "";
 
         if (isTerminal(X)) {
             if (X[0] == '@') {
-                const char* desc = "未知动作";
-                for (size_t k=0; k < sizeof(actionDict)/sizeof(ActionMap); k++) {
-                    if (strcmp(X, actionDict[k].action) == 0) { desc = actionDict[k].desc; break; }
-                }
-                char action[150]; snprintf(action, sizeof(action), "执行%s, %s", X, desc);
-                printf("%-6d | %-25s | %-25s | %-15s | %-45s\n", step++, stkStr, inStr, "", action);
-                top--;
-            }
-            else if (strcmp(X, "e") == 0) { 
-                char action[100]; snprintf(action, sizeof(action), "弹出%s (空归约)", X);
-                printf("%-6d | %-25s | %-25s | %-15s | %-45s\n", step++, stkStr, inStr, "", action);
+                int rId = atoi(X + 1);
+                char desc[100] = "";
+                getActionDesc(rId, desc);
+                strcpy(prodStr, ""); // Bỏ trống cột sản xuất khi thực thi Action
+                snprintf(action, sizeof(action), "执行%s，%s", X, desc); 
+                
+                printf(" "); printCell(stepStr, 5); printf(" | ");
+                printCell(stkStr, 50); printf(" | ");
+                printCell(inStr, 35); printf(" | ");
+                printCell(prodStr, 25); printf(" | ");
+                printCell(action, 35); printf("\n");
                 top--;
             }
             else {
                 TokenType expectedType = strToToken(X);
                 if (expectedType != TOK_ERROR && expectedType == a.type) {
-                    char action[100];
-                    char prodStr[20] = "";
-                    
                     if (strcmp(X, "#") == 0) {
-                        strcpy(prodStr, "Acc");
-                        snprintf(action, sizeof(action), "接受");
-                    } else snprintf(action, sizeof(action), "%s 匹配", X);
-                    printf("%-6d | %-25s | %-25s | %-15s | %-45s\n", step++, stkStr, inStr, prodStr, action);
+                        strcpy(prodStr, "acc");
+                        strcpy(action, "分析成功");
+                    } else {
+                        strcpy(prodStr, "");
+                        snprintf(action, sizeof(action), "%s匹配", X); 
+                    }
+                    
+                    printf(" "); printCell(stepStr, 5); printf(" | ");
+                    printCell(stkStr, 50); printf(" | ");
+                    printCell(inStr, 35); printf(" | ");
+                    printCell(prodStr, 25); printf(" | ");
+                    printCell(action, 35); printf("\n");
                     top--; ip++;
                 } else { 
                     printf("\n[ERROR] 语法错误！期望 '%s' 但找到 '%s' (行 %d)\n", X, a.lexeme, a.line); 
@@ -462,31 +510,39 @@ void runSyntaxProcess() {
             int rule = getRule(X, a.type);
             if (rule > 0) {
                 top--;
-                char revPush[100] = "";
                 int count = 0; 
+                char revPush[100] = "";
                 while(strlen(rhsItems[rule][count]) > 0 && count < 10) count++;
                 
                 for(int i = count-1; i >= 0; i--) {
-                    if (strcmp(rhsItems[rule][i], "e") != 0) {
-                        if (top < 99) {
-                            strncpy(stack[++top], rhsItems[rule][i], sizeof(stack[top]) - 1);
-                            strncat(revPush, rhsItems[rule][i], sizeof(revPush) - strlen(revPush) - 1);
-                            strncat(revPush, " ", sizeof(revPush) - strlen(revPush) - 1);
-                        }
+                    if (top < 99) {
+                        strncpy(stack[++top], rhsItems[rule][i], sizeof(stack[top]) - 1);
+                        strcat(revPush, rhsItems[rule][i]);
+                        strcat(revPush, " ");
                     }
                 }
-                char action[100]; 
-                if (strcmp(rhsItems[rule][0], "e") == 0) snprintf(action, sizeof(action), "%s 弹栈，执行空归约", X);
-                else snprintf(action, sizeof(action), "%s 弹栈，%s逆序压栈", X, revPush);
-                printf("%-6d | %-25s | %-25s | %-15s | %-45s\n", step++, stkStr, inStr, ruleStr[rule], action);
+                
+                // In luật sinh bao gồm cả @
+                snprintf(prodStr, sizeof(prodStr), "%s->", ruleLHS[rule]);
+                for(int i=0; i<count; i++) {
+                    strcat(prodStr, rhsItems[rule][i]);
+                }
+                
+                snprintf(action, sizeof(action), "%s弹栈，%s逆序压栈", X, revPush);
+                
+                printf(" "); printCell(stepStr, 5); printf(" | ");
+                printCell(stkStr, 50); printf(" | ");
+                printCell(inStr, 35); printf(" | ");
+                printCell(prodStr, 25); printf(" | ");
+                printCell(action, 35); printf("\n");
+                
             } else { 
                 printf("\n[ERROR] 语法错误！非终结符 '%s' 没有对应向前看符号 '%s' 的产生式 (行 %d)\n", X, a.lexeme, a.line); 
                 return; 
             }
         }
     }
-    printf("----------------------------------------------------------------------------------------------------------------------------------\n");
-    printf("=> LL(1) 语法分析及语义属性制导成功！\n");
+    printf("-----------------------------------------------------------------------------------------------------------------------------------------------------------------\n");
 }
 
 /* =====================================================================
